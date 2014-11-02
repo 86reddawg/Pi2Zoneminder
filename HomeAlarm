@@ -1,0 +1,108 @@
+#!/usr/bin/python3
+'''
+Created on Sep 6, 2013
+@author: Joshua Hughes
+
+Interfaces home alarm sensors to Zoneminder
+Sensors = 0 when in alarm state
+
+Zoneminder message format:
+CameraID|on+3|254|AlarmText
+
+TODO - better error handling - retry connection when failed, etc
+'''
+#from time import sleep
+ZoneMinderIP = "192.168.1.1"
+ZoneMinderPort = "6802"
+logfile = '/var/log/homealarm/HomeAlarm.log'
+
+import pifacecommon, pifacedigitalio, time, datetime, telnetlib, socket, traceback, sys, logging, errno
+
+Alarm = 0
+Normal = 1
+On = pifacedigitalio.IODIR_ON
+Off = pifacedigitalio.IODIR_OFF
+OnOff = pifacedigitalio.IODIR_BOTH
+Cam2 = 0
+
+#Map PI inputs to camera id, alarm score, and alarm text
+AlarmMap = {0:[2, 250, 'Alarm0'],
+	    1:[2, 250, 'Alarm1'],
+	    2:[2, 250, 'Alarm2'],
+	    3:[2, 253, 'Den Motion'],
+	    4:[2, 253, 'Master Motion'],
+	    5:[6, 254, 'Patio Door'],
+	    6:[2, 254, 'Garage Door'],
+	    7:[2, 254, 'Front Door']}
+
+#This routine is called when the listener triggers
+def alarm(event):
+    global pfd
+    ts = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
+    time.sleep(.1) #Delayed/Debounce to get rid of any IO jitter
+    CurVal = pfd.input_pins[event.pin_num].value
+    if (event.direction == On and CurVal == Normal) or (event.direction == Off and CurVal == Alarm):
+	    AlarmResponse = TriggerZoneMinder(AlarmMap[event.pin_num], CurVal, ts)
+	    print(AlarmResponse)
+	    logger.warning(AlarmResponse)
+
+def TriggerZoneMinder(AlarmTrigger, AlarmStatus, TimeStamp):
+    global tn, logger, Cam2
+    response = 'Error!'
+    TriggeredID = str(AlarmTrigger[0]).encode('latin-1')
+    TriggeredScore = str(AlarmTrigger[1]).encode('latin-1')
+    TriggeredText = AlarmTrigger[2].encode('latin-1')
+    if (AlarmStatus == Alarm): 
+	    if AlarmTrigger[2] in ('Den Motion', 'Garage Door', 'Front Door', 'Patio Door'): Cam2 += 1
+	    response = TimeStamp+" - "+AlarmTrigger[2]+' Alarm - Count: '+str(Cam2)+' - Response: '
+	    AlarmCommand = b"|on+30|"+TriggeredScore+b"|"+TriggeredText
+    else:
+#	    time.sleep(30)
+	    if AlarmTrigger[2] in ('Den Motion', 'Garage Door', 'Front Door', 'Patio Door'): Cam2 -= 1
+	    response = TimeStamp+" - "+AlarmTrigger[2]+' Normal - Count: '+str(Cam2)+' - Response: '
+#	    AlarmCommand = b"|off"
+	    AlarmCommand = b"|on+15|"+TriggeredScore+b"|"+TriggeredText
+#	    AlarmCommand = b""
+#	    TriggeredID = b""
+    #only trigger camera if one of the following: (no other cameras set up right now)
+    if Cam2<0: Cam2 = 0
+    if (AlarmTrigger[2] in ('Den Motion', 'Garage Door', 'Front Door', 'Patio Door')) and ((AlarmStatus == Alarm) or (AlarmStatus == Normal and Cam2 == 0)):
+	    try:
+		    tn = telnetlib.Telnet(ZoneMinderIP, ZoneMinderPort)
+		    print(TriggeredID+AlarmCommand)
+		    tn.write(TriggeredID+AlarmCommand)
+		    response += tn.read_until(b'\n',1).decode('utf-8').rstrip('\n')
+	    except socket.error as e: 
+		    if e.errno == errno.ECONNREFUSED:
+			    response += "Connection Refused"
+		    else:
+			    response += "Socket Error"
+	    except EOFError as e: response += "EOF Error"
+	    except: response += "Unexpected Error"
+	    finally: tn.close()
+    else: response += 'No Trigger'
+    return response
+
+def InitLogger():
+    global logger
+    logger = logging.getLogger('HomeAlarm')
+    hdlr = logging.FileHandler(logfile)
+    hdlr.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(hdlr)
+    logger.setLevel(logging.WARNING)
+
+
+if __name__ == "__main__":
+    global pfd, logger
+    pifacedigitalio.init()
+    InitLogger()
+    pfd = pifacedigitalio.PiFaceDigital()
+    listener = pifacedigitalio.InputEventListener()
+    for i in range(len(AlarmMap)):
+	listener.register(i, OnOff, alarm)
+    listener.activate()
+    ts = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
+    print(ts+' - Home Alarm Startup')
+    logger.warning('\n'+ts+' - Home Alarm Startup')
+    while (True):time.sleep(1)
+

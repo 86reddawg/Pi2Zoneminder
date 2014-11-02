@@ -1,0 +1,57 @@
+#!/bin/sh
+# Start/stop the HomeAlarm daemon.
+#
+### BEGIN INIT INFO
+# Provides:          HomeAlarm
+# Required-Start:    $remote_fs $syslog $time
+# Required-Stop:     $remote_fs $syslog $time
+# Should-Start:      $network
+# Should-Stop:       $network
+# Default-Start:     2 3 4 5
+# Default-Stop:	     0 1 6
+# Short-Description: Home Monitor
+# Description:       Long description of home monitor...
+### END INIT INFO
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+DESC="HomeAlarm daemon"
+NAME=AlarmSystem
+DAEMON=/sbin/HomeAlarm
+PIDFILE=/var/run/HomeAlarm.pid
+SCRIPTNAME=/etc/init.d/"$NAME"
+
+test -f $DAEMON || exit 0
+
+. /lib/lsb/init-functions
+
+#[ -r /etc/default/cron ] && . /etc/default/cron
+
+case "$1" in
+start)	log_daemon_msg "Starting Home Alarm" "HomeAlarm"
+        start-stop-daemon --start --make-pidfile -p $PIDFILE --startas $DAEMON -b
+        log_end_msg $?
+	;;
+stop)	log_daemon_msg "Stopping Home Alarm" "HomeAlarm"
+#	start-stop-daemon --stop --quiet --oknodo -p $PIDFILE
+        killproc -p $PIDFILE $DAEMON
+	killall HomeAlarm
+        RETVAL=$?
+        [ $RETVAL -eq 0 ] && [ -e "$PIDFILE" ] && rm -f $PIDFILE
+        log_end_msg $RETVAL
+        ;;
+restart) log_daemon_msg "Restarting Home Alarm" "HomeAlarm" 
+        $0 stop
+        $0 start
+        log_end_msg 0
+        ;;
+reload|force-reload) log_daemon_msg "Reloading configuration files for Home Alarm" "HomeAlarm"
+        log_end_msg 0
+        ;;
+status)
+        status_of_proc -p $PIDFILE $DAEMON $NAME && exit 0 || exit $?
+        ;;
+*)	log_action_msg "Usage: /etc/init.d/cron {start|stop|status|restart|reload|force-reload}"
+        exit 2
+        ;;
+esac
+exit 0
